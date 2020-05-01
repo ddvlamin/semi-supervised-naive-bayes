@@ -132,63 +132,50 @@ class NaiveBayes(BaseModel):
         setattr(self, parameter, value)
     return self
 
+  def _compute_coefficients(self):
+    self.coef_ = np.log(self.parameters_) - np.log(1-self.parameters_)
+    
+    intercept_constants = np.sum(np.log(1-self.parameters_), axis=1).reshape((self.n_classes_,))
+    self.intercept_ = np.log(self.intercept_parameters_) + intercept_constants
+
   def _bootstrap_model(self, X, y):
     """
-    initializes coef_ and neg_coef_
-
-    :returns np.array: of shape (n_samples, 2) with the initial class probabilities per sample
     """
-    self.le_ = preprocessing.LabelEncoder()
-    self.
+    self.classes_ = sorted(np.unique(y))
+    self.n_classes_ = len(self.le_.classes_)-1
 
+    self.n_unlabeled_ = np.sum(y==-1)
+    self.n_labeled_ = np.sum(y!=-1)
 
-    self.coef_ = copy.deepcopy(self.feature_priors_)
-    self.neg_coef_ = copy.deepcopy(self.feature_priors_)
+    self.parameters_ = np.zeros((self.n_classes_, X.shape[1]))
+    self.intercept_parameters_ = np.zeros((self.n_classes_,))
+    self.coef_ = np.zeros((self.n_classes_, X.shape[1]))
+    self.intercept_ = np.zeros((self.n_classes_,))
+    self.n_samples_ = np.zeros((self.n_classes_,))
 
-    self.coef_[0,self.fixed_feature_indices_] =  self.fixed_feature_likelihoods_[1]
-    self.neg_coef_[0,self.fixed_feature_indices_] = self.fixed_feature_likelihoods_[0]
+    for i, class_label in enumerate(self.classes_[1:]):
+      self.parameters_[i,:] = np.sum(X[y==class_label,:], axis=0)
+      self.n_samples_[i] = np.sum(y==class_label)
+      self.parameters_[i,:] /= self.n_samples_[i]
+
+      self.intercept_parameters_[i] = self.n_samples_[i] / self.n_labeled_
     
-    return self.predict_proba(X)
+    self._compute_coefficients()
 
-  def _update_model(self, feature_matrix, sample_posteriors):
-    """
-    This function updates the feature likelihoods P(Feature|Class) according to the EM-algorithm
-    This corresponds to the maximization step of EM
+  def _update_model(self, X, y, posterior_class_probabilities):
+    
+    for i, class_label in enumerate(self.classes_[1:]):
+      self.parameters_[i,:] = ( np.sum(X[y==class_label,:], axis=0) + 
+        np.sum(X[y==-1,:] * posterior_class_probabilities[y==-1,i], axis=0) )
 
-    It sets the linear weight vector self.coef_ and self.neg_coef_ to P(Feature|Class)
+      sum_probas = np.sum(posterior_class_probabilities[y==-1,i])
+      self.parameters_[i,:] /= (self.n_samples_[i] + sum_probas)
 
-    :param feature_matrix: sparse matrix with non-zero elements of 1
-    :param sample_posteriors: current class probabilities for each sample
-    """
-    sum_class_posterior = sample_posteriors.sum(axis=0)
-    n_samples = feature_matrix.shape[0]
-
-    if not self.fixed:
-      self.intercept_ = np.log(sum_class_posterior[1]/n_samples)
-      self.neg_intercept_ = np.log(sum_class_posterior[0]/n_samples)
-   
-    likelihood_numerator = feature_matrix.multiply(sample_posteriors[:,1].reshape((n_samples, 1)))
-    feature_likelihoods = np.asarray(smoothing(likelihood_numerator, sum_class_posterior[1]))
-    self.coef_ = feature_likelihoods
-
-    if self.keep_history:
-      #use the recomputed prior to store the posteriors (otherwise probability might not between 0 and 1)
-      class_prior = sum_class_posterior[1]/feature_matrix.shape[0]
-      self.history["feature_posteriors"].append(
-          self.coef_ * class_prior / self.feature_priors_
+      self.intercept_parameters_[i] = (
+          (self.n_samples_[i] + sum_probas) / X.shape[0]
       )
-    
-    if self.fixed:
-      self.coef_[0,self.fixed_feature_indices_] = self.fixed_feature_likelihoods_[1]
-     
-    if self.keep_history:
-      self.history["feature_likelihoods"].append(self.coef_)
 
-    likelihood_numerator = feature_matrix.multiply(sample_posteriors[:,0].reshape((n_samples, 1)))
-    feature_likelihoods = np.asarray(smoothing(likelihood_numerator, sum_class_posterior[0]))
-    if self.fixed:
-      feature_likelihoods[0,self.fixed_feature_indices_] = self.fixed_feature_likelihoods_[0]
-    self.neg_coef_ = feature_likelihoods
+    self._compute_coefficients()
 
   def _expected_log_joint_likelihood(self, X):
     """
@@ -201,22 +188,22 @@ class NaiveBayes(BaseModel):
     
     return apply(sum_pred, np.log).sum(axis=0).sum()
 
-  def _em_iterations(self, feature_matrix):
+  def _em_iterations(self, X, y):
     """
     :param feature_matrix csr_matrix: sparse matrix where non-zero elements are 1
     """
-    prev_log_likelihood = self._expected_log_joint_likelihood(feature_matrix)
+    prev_log_likelihood = self._expected_log_joint_likelihood(X)
     if self.keep_history:
       self.history["log_likelihood"].append(prev_log_likelihood)
     
     logging.info(f"Initial likelihood {prev_log_likelihood}")
     
     for i in range(self.n_iter):
-      posterior_class_probabilities = self.predict_proba(feature_matrix)
+      posterior_class_probabilities = self.predict_proba(X)
       
-      self._update_model(feature_matrix, posterior_class_probabilities)
+      self._update_model(X, y, posterior_class_probabilities)
       
-      log_likelihood = self._expected_log_joint_likelihood(feature_matrix)
+      log_likelihood = self._expected_log_joint_likelihood(X)
      
       if self.keep_history:
         self.history["log_likelihood"].append(log_likelihood)
@@ -245,36 +232,13 @@ class NaiveBayes(BaseModel):
     if self.check_adjacency and _check_adjacency(X):
       raise ValueError("Input matrix X should only contain ones or zeros")
 
-    self.feature_priors_ = np.asarray(X.sum(axis=0)/X.shape[0])
-    self._initialize()
-
-    posterior_class_probabilities = self._bootstrap_model(X)
-   
-    if self.n_iter != 0:
-      self._update_model(X, posterior_class_probabilities)
-      
-      self._em_iterations(X)
+    self._bootstrap_model(X, y)
+    self._em_iterations(X, y)
 
     return self
     
   def predict(self, X):
-    constant = np.sum(np.log(1-self.coef_)) + self.intercept_ 
-    term1 = X * np.log(self.coef_).transpose()
-    term2 = X * np.log(1-self.coef_).transpose()
-    return (term1 - term2) + constant
-
-  def predict_unnormalized(self, X):
-    pos_pred = apply(self.predict(X), np.exp)
-    neg_constant = np.sum(np.log(1-self.neg_coef_)) + self.neg_intercept_ 
-    neg_pred = (
-        (
-          X * np.log(self.neg_coef_).transpose() -
-          X * np.log(1-self.neg_coef_).transpose() 
-        ) + neg_constant
-    )
-    neg_pred = apply(neg_pred,np.exp)
-
-    return hstack(neg_pred, pos_pred)
+    return X * self.coef_.transpose() + self.intercept_.reshape((1, self.n_classes_))
 
   def predict_proba(self, X):
     """
@@ -287,7 +251,7 @@ class NaiveBayes(BaseModel):
     if self.check_adjacency and _check_adjacency(X):
       raise ValueError("Input matrix X should only contain ones or zeros")
 
-    pred = self.predict_unnormalized(X)
+    pred = np.exp(self.predict(X))
     sum_pred = pred.sum(axis=1).reshape((X.shape[0],1))
 
     result = pred / sum_pred
