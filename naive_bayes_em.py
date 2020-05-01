@@ -53,10 +53,9 @@ def _check_adjacency(m):
   nonzero_rows = np.any(row_sum==0) #no row should be all zeros
   return (m.data!=1).sum()!=0 or nonzero_rows
 
-class NaiveBayes(BaseModel):
+class NaiveBayes():
   def __init__(self, 
       n_iter=10, 
-      class_priors=None,
       stop_criterion=0.1,
       keep_history=True):
     """
@@ -142,7 +141,7 @@ class NaiveBayes(BaseModel):
     """
     """
     self.classes_ = sorted(np.unique(y))
-    self.n_classes_ = len(self.le_.classes_)-1
+    self.n_classes_ = len(self.classes_)-1
 
     self.n_unlabeled_ = np.sum(y==-1)
     self.n_labeled_ = np.sum(y!=-1)
