@@ -164,8 +164,11 @@ class NaiveBayes():
   def _update_model(self, X, y, posterior_class_probabilities):
     
     for i, class_label in enumerate(self.classes_[1:]):
+      unlabeled_X = X[y==-1,:].tocsc()
+      unlabeled_proba = posterior_class_probabilities[y==-1,i]
+      unlabeled_X.data = np.multiply(unlabeled_X.data, np.take(unlabeled_proba, unlabeled_X.indices))
       self.parameters_[i,:] = ( np.sum(X[y==class_label,:], axis=0) + 
-        np.sum(X[y==-1,:] * posterior_class_probabilities[y==-1,i], axis=0) )
+        np.sum(unlabeled_X, axis=0) )
 
       sum_probas = np.sum(posterior_class_probabilities[y==-1,i])
       self.parameters_[i,:] /= (self.n_samples_[i] + sum_probas)
@@ -191,32 +194,32 @@ class NaiveBayes():
     """
     :param feature_matrix csr_matrix: sparse matrix where non-zero elements are 1
     """
-    prev_log_likelihood = self._expected_log_joint_likelihood(X)
-    if self.keep_history:
-      self.history["log_likelihood"].append(prev_log_likelihood)
+    #prev_log_likelihood = self._expected_log_joint_likelihood(X)
+    #if self.keep_history:
+    #  self.history["log_likelihood"].append(prev_log_likelihood)
     
-    logging.info(f"Initial likelihood {prev_log_likelihood}")
+    #logging.info(f"Initial likelihood {prev_log_likelihood}")
     
     for i in range(self.n_iter):
       posterior_class_probabilities = self.predict_proba(X)
       
       self._update_model(X, y, posterior_class_probabilities)
       
-      log_likelihood = self._expected_log_joint_likelihood(X)
+      #log_likelihood = self._expected_log_joint_likelihood(X)
      
-      if self.keep_history:
-        self.history["log_likelihood"].append(log_likelihood)
+      #if self.keep_history:
+      #  self.history["log_likelihood"].append(log_likelihood)
       
-      likelihood_difference = log_likelihood - prev_log_likelihood
-      logging.info(f"""iteration {i}, log likelihood: {log_likelihood}, difference: {likelihood_difference}""")
+      #likelihood_difference = log_likelihood - prev_log_likelihood
+      #logging.info(f"""iteration {i}, log likelihood: {log_likelihood}, difference: {likelihood_difference}""")
       
-      assert likelihood_difference >= 0
-      if likelihood_difference < self.stop_criterion:
-        break
+      #assert likelihood_difference >= 0
+      #if likelihood_difference < self.stop_criterion:
+      #  break
       
-      prev_log_likelihood = log_likelihood
+      #prev_log_likelihood = log_likelihood
     
-    logging.info(f"Final likelihood {prev_log_likelihood}")
+    #logging.info(f"Final likelihood {prev_log_likelihood}")
  
   def fit(self, X, y, **kwargs):
     """
@@ -228,9 +231,6 @@ class NaiveBayes():
     :param y: array-like, shape (n_bottom nodes, 1)
         Not used
     """
-    if self.check_adjacency and _check_adjacency(X):
-      raise ValueError("Input matrix X should only contain ones or zeros")
-
     self._bootstrap_model(X, y)
     self._em_iterations(X, y)
 
@@ -247,8 +247,6 @@ class NaiveBayes():
     :returns: matrix of shape = [n_samples, 2] 
               where second column are the probabilities for second class (positive class)
     """
-    if self.check_adjacency and _check_adjacency(X):
-      raise ValueError("Input matrix X should only contain ones or zeros")
 
     pred = np.exp(self.predict(X))
     sum_pred = pred.sum(axis=1).reshape((X.shape[0],1))
